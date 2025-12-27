@@ -44,15 +44,11 @@ function App() {
         </div>
         ) : <p>waiting for data!!</p>}
         {/*one button to toggle fan, one to toggle heater*/}
-        <button onClick={() => ConstructCommand("0x01" + data?.heater)}>Toggle Fan</button>
-        <button onClick={() => ConstructCommand("0x02" + data?.heater)}>Toggle Heater</button>
+        <button onClick={() => sendCommand(ws.current, 0x01, data?.fan ? 0 : 1)}>Toggle Fan</button>
+        <button onClick={() => sendCommand(ws.current, 0x02, data?.heater ? 0 : 1)}>Toggle Heater</button>
       </div>
     </>
   )
-}
-
-function ConstructCommand(command: string){
-  
 }
 
 function checkStatus(status: number) {
@@ -78,18 +74,50 @@ function checkStatus(status: number) {
   }
 }
 
-function parseUARTData(data: ArrayBuffer) : UARTData {
+function parseUARTData(data: ArrayBuffer) : UARTData | undefined {
   const view = new DataView(data);
   //console.log(data);
+  const startByte = view.getInt8(0);
+  if (startByte !== 0xAB) {
+    console.error("Start byte error");
+    return undefined;
+  }
   const id = view.getUint16(1, true);
   const temp = view.getInt16(3, true);
   const fan = view.getInt8(5) === 1;
   const heater = view.getInt8(6) === 1;
   const battery = view.getInt8(7);
   const status = view.getInt8(8);
+  const dataArray = new Uint8Array(view.buffer);
+  const calculatedXor = calculateXor(dataArray);
+  if (!calculatedXor) {
+    console.error("Checksum error");
+    return undefined;
+  }
+
   return { id, temp, fan, heater, battery, status };
 }
 
+function calculateXor(data: Uint8Array) : boolean{
+  const receivedXor = data[9];
+  // should prolly change to a loop
+  const calculatedXor = data[0] ^ data[1] ^ data[2] ^ data[3] ^ data[4] ^ data[5] ^ data[6] ^ data[7] ^ data[8];
+  return calculatedXor === receivedXor;
+}
 
+function sendCommand(ws: WebSocket | null, commandType: number, value: number) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.error("no websocket");
+    return;
+  } else {
+    
+    const command = new Uint8Array(4);
+    command[0] = 0xBA;
+    command[1] = commandType;
+    command[2] = value;
+    command[3] = command[0] ^ command[1] ^ command[2];
+    ws.send(command); 
+  }
+}
 
 export default App
