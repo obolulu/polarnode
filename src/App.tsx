@@ -74,50 +74,96 @@ function checkStatus(status: number) {
   }
 }
 
-function parseUARTData(data: ArrayBuffer) : UARTData | undefined {
-  const view = new DataView(data);
-  //console.log(data);
-  const startByte = view.getInt8(0);
-  if (startByte !== 0xAB) {
-    console.error("Start byte error");
+function parseUARTData(buf: ArrayBuffer): UARTData | undefined {
+  const view = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+
+  if (bytes.length < 10) return undefined;
+  if (view.getUint8(0) !== 0xAB) return undefined;
+
+  const crcOffset = bytes.length - 2;
+  const statusOffset = bytes.length - 3;
+  
+  const payload = bytes.slice(0, bytes.length - 2);
+  const receivedCrc = (view.getUint8(bytes.length - 2) << 8) | view.getUint8(bytes.length - 1);
+  
+  if (calculateCrc16(payload) !== receivedCrc) {
+    console.error("CRC Mismatch");
     return undefined;
   }
   const id = view.getUint16(1, true);
-  const temp = view.getInt16(3, true);
-  const fan = view.getInt8(5) === 1;
-  const heater = view.getInt8(6) === 1;
-  const battery = view.getInt8(7);
-  const status = view.getInt8(8);
-  const dataArray = new Uint8Array(view.buffer);
-  const calculatedXor = calculateXor(dataArray);
-  if (!calculatedXor) {
-    console.error("Checksum error");
-    return undefined;
+  const tempRaw = view.getUint16(3, true);
+  const temp = decodeFloat16(tempRaw);
+
+  const fan = view.getUint8(5) === 1;
+  const heater = view.getUint8(6) === 1;
+
+  const status = view.getUint8(statusOffset);
+
+  const optionalLen = statusOffset - 7;
+  let battery: number | undefined;
+  if (optionalLen === 1) battery = view.getUint8(7);
+  else if (optionalLen === 0) battery = undefined;
+  else return undefined;
+
+  return { id, temp, fan, heater, battery: battery ?? -1, status };
+}
+
+
+function decodeFloat16(h: number): number {
+  const sign = (h & 0x8000) ? -1 : 1;
+  const exp = (h >> 10) & 0x1f;
+  const frac = h & 0x03ff;
+
+  if (exp === 0) return sign * Math.pow(2, -14) * (frac / 1024);
+  if (exp === 31) return frac ? NaN : sign * Infinity;
+  return sign * Math.pow(2, exp - 15) * (1 + frac / 1024);
+}
+
+
+function crc16X25(bytes: Uint8Array, length: number): number {
+  let crc = 0xffff;
+  for (let i = 0; i < length; i++) {
+    crc ^= bytes[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc >> 1) ^ ((crc & 1) ? 0x8408 : 0);
+    }
   }
-
-  return { id, temp, fan, heater, battery, status };
+  return (crc ^ 0xffff) & 0xffff;
 }
 
-function calculateXor(data: Uint8Array) : boolean{
-  const receivedXor = data[9];
-  // should prolly change to a loop
-  const calculatedXor = data[0] ^ data[1] ^ data[2] ^ data[3] ^ data[4] ^ data[5] ^ data[6] ^ data[7] ^ data[8];
-  return calculatedXor === receivedXor;
+function calculateCrc16(data: Uint8Array): number {
+  let crc = 0xFFFF;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= (data[i] << 8);
+    for (let j = 0; j < 8; j++) {
+      if (crc & 0x8000) {
+        crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
+      } else {
+        crc = (crc << 1) & 0xFFFF;
+      }
+    }
+  }
+  return crc;
 }
-
 function sendCommand(ws: WebSocket | null, commandType: number, value: number) {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     console.error("no websocket");
     return;
-  } else {
-    
-    const command = new Uint8Array(4);
-    command[0] = 0xBA;
-    command[1] = commandType;
-    command[2] = value;
-    command[3] = command[0] ^ command[1] ^ command[2];
-    ws.send(command); 
   }
+  const payload = new Uint8Array(3);
+  payload[0] = 0xBA;
+  payload[1] = commandType;
+  payload[2] = value;
+
+  const crc = calculateCrc16(payload);//added the paylod array because otherwise the crc calculation didnt work correct
+  const command = new Uint8Array(5);
+  command[0] = payload[0];
+  command[1] = payload[1];
+  command[2] = payload[2];
+  command[3] = (crc >> 8) & 0xFF;
+  command[4] = crc & 0xFF;
+  ws.send(command);
 }
 
 export default App
