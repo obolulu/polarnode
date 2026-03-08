@@ -1,8 +1,8 @@
 interface UARTData {
     id: number;
     temp: number;
-    fan: boolean;
-    heater: boolean;
+    fan: number;
+    heater: number;
     battery: number;
     status: number;
 }

@@ -37,18 +37,40 @@ function App() {
         <div>
         <p>ID: {data.id}</p>
         <p>Temperature: {data.temp}</p>
-        <p>Fan: {data.fan ? "On" : "Off"}</p>
-        <p>Heater: {data.heater ? "On" : "Off"}</p>
+        <p>Fan: {fanHeaterLabel(data.fan)}</p>
+        <p>Heater: {fanHeaterLabel(data.heater)}</p>
         <p>Battery: {data.battery}%</p>
         <p>Status: {checkStatus(data.status)}</p>
         </div>
         ) : <p>waiting for data!!</p>}
-        {/*one button to toggle fan, one to toggle heater*/}
-        <button onClick={() => sendCommand(ws.current, 0x01, data?.fan ? 0 : 1)}>Toggle Fan</button>
-        <button onClick={() => sendCommand(ws.current, 0x02, data?.heater ? 0 : 1)}>Toggle Heater</button>
+          <p>Fan: </p>
+          {([0, 1, 2] as const).map((value) => (
+            <button
+              key={value}
+              className={data?.fan === value ? "active" : ""}
+              onClick={() => sendCommand(ws.current, 0x01, value)}>
+              {fanHeaterLabel(value)}
+            </button>
+          ))}
+          <p>Heater: </p>
+          {([0, 1, 2] as const).map((value) => (
+            <button
+              key={value}
+              className={data?.heater === value ? "active" : ""}
+              onClick={() => sendCommand(ws.current, 0x02, value)}>
+              {fanHeaterLabel(value)}
+            </button>
+          ))}
       </div>
     </>
   )
+}
+
+function fanHeaterLabel(value: number): string {
+  if (value === 0) return "Off";
+  if (value === 1) return "Low";
+  if (value === 2) return "High";
+  return "Off";
 }
 
 function checkStatus(status: number) {
@@ -95,8 +117,8 @@ function parseUARTData(buf: ArrayBuffer): UARTData | undefined {
   const tempRaw = view.getUint16(3, true);
   const temp = decodeFloat16(tempRaw);
 
-  const fan = view.getUint8(5) === 1;
-  const heater = view.getUint8(6) === 1;
+  const fan = view.getUint8(5);
+  const heater = view.getUint8(6);
 
   const status = view.getUint8(statusOffset);
 
