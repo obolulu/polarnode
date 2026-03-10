@@ -3,10 +3,11 @@
 import { useState, useEffect, useRef } from 'react';
 import './App.css'
 import type { UARTData } from './Interfaces';
-
-
+import type { TempPoint } from './components/TemperatureChart';
+import { TemperatureChart } from './components/TemperatureChart';
 function App() {
   const [data, setData] = useState<UARTData | null> (null);
+  const [tempHistory, setTempHistory] = useState<TempPoint[]>([]);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -22,6 +23,13 @@ function App() {
       const parsed = parseUARTData(event.data);
       if (parsed) {
         setData(parsed);
+
+        const now = Date.now();
+        const cutoff = now - 60_000;
+        setTempHistory((prev) => {
+          const updated = [...prev, { t: now, temp: parsed.temp }];
+          return updated.filter((p) => p.t >= cutoff);
+        });
       }
     };
     return () => {
@@ -37,6 +45,7 @@ function App() {
         <div>
         <p>ID: {data.id}</p>
         <p>Temperature: {data.temp}</p>
+        <TemperatureChart points={tempHistory} />
         <p>Fan: {fanHeaterLabel(data.fan)}</p>
         <p>Heater: {fanHeaterLabel(data.heater)}</p>
         <p>Battery: {data.battery}%</p>
