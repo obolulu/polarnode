@@ -5,10 +5,25 @@ import './App.css'
 import type { UARTData } from './Interfaces';
 import type { TempPoint } from './components/TemperatureChart';
 import { TemperatureChart } from './components/TemperatureChart';
+
+function computeAutoTargets(temp: number): { fan: number; heater: number; label: string } {
+  if (temp > 15) return { fan: 2, heater: 0, label: "Cooling hard (Fan High)" };
+  if (temp > 10) return { fan: 1, heater: 0, label: "Cooling gently (Fan Low)" };
+  if (temp < -5)  return { fan: 0, heater: 2, label: "Heating hard (Heater High)" };
+  if (temp < 0)   return { fan: 0, heater: 1, label: "Heating gently (Heater Low)" };
+  return { fan: 0, heater: 0, label: "In range - all off" };
+}
+
 function App() {
-  const [data, setData] = useState<UARTData | null> (null);
+  const [data, setData] = useState<UARTData | null>(null);
   const [tempHistory, setTempHistory] = useState<TempPoint[]>([]);
+  const [autoControl, setAutoControl] = useState(false);
+  const autoControlRef = useRef(false);
   const ws = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    autoControlRef.current = autoControl;
+  }, [autoControl]);
 
   useEffect(() => {
     const wssurl = "wss://polarnode.alsoft.nl";
@@ -16,7 +31,6 @@ function App() {
     ws.current.binaryType = "arraybuffer";
 
     ws.current.onopen = () => console.log("Connected to PolarNode");
-    
     ws.current.onclose = () => console.log("Disconnected");
 
     ws.current.onmessage = (event) => {
@@ -36,43 +50,73 @@ function App() {
       ws.current?.close();
     };
   }, []);
-  
+
+  useEffect(() => {
+    if (!autoControl || !data) return;
+
+    const { fan: targetFan, heater: targetHeater } = computeAutoTargets(data.temp);
+
+    if (data.fan !== targetFan) {
+      sendCommand(ws.current, 0x01, targetFan);
+    }
+    if (data.heater !== targetHeater) {
+      sendCommand(ws.current, 0x02, targetHeater);
+    }
+  }, [data, autoControl]);
+
+  const autoStatus = data ? computeAutoTargets(data.temp).label : null;
+
   return (
     <>
       <div>
         <h1>PolarNode</h1>
-        {data? (
-        <div>
-        <p>ID: {data.id}</p>
-        <p>Temperature: {data.temp}</p>
-        <TemperatureChart points={tempHistory} />
-        <p>Fan: {fanHeaterLabel(data.fan)}</p>
-        <p>Heater: {fanHeaterLabel(data.heater)}</p>
-        <p>Battery: {data.battery}%</p>
-        <p>Status: {checkStatus(data.status)}</p>
-        </div>
+        {data ? (
+          <div>
+            <p>ID: {data.id}</p>
+            <p>Temperature: {data.temp}</p>
+            <TemperatureChart points={tempHistory} />
+            <p>Fan: {fanHeaterLabel(data.fan)}</p>
+            <p>Heater: {fanHeaterLabel(data.heater)}</p>
+            <p>Battery: {data.battery}%</p>
+            <p>Status: {checkStatus(data.status)}</p>
+          </div>
         ) : <p>waiting for data!!</p>}
-          <p>Fan: </p>
-          {([0, 1, 2] as const).map((value) => (
-            <button
-              key={value}
-              className={data?.fan === value ? "active" : ""}
-              onClick={() => sendCommand(ws.current, 0x01, value)}>
-              {fanHeaterLabel(value)}
-            </button>
-          ))}
-          <p>Heater: </p>
-          {([0, 1, 2] as const).map((value) => (
-            <button
-              key={value}
-              className={data?.heater === value ? "active" : ""}
-              onClick={() => sendCommand(ws.current, 0x02, value)}>
-              {fanHeaterLabel(value)}
-            </button>
-          ))}
+
+        <div className="auto-control-row">
+          <button
+            className={`auto-toggle${autoControl ? " auto-toggle--on" : ""}`}
+            onClick={() => setAutoControl((prev) => !prev)}
+          >
+            Auto: {autoControl ? "ON" : "OFF"}
+          </button>
+          {autoControl && autoStatus && (
+            <span className="auto-status">{autoStatus}</span>
+          )}
+        </div>
+
+        <p>Fan: </p>
+        {([0, 1, 2] as const).map((value) => (
+          <button
+            key={value}
+            className={data?.fan === value ? "active" : ""}
+            disabled={autoControl}
+            onClick={() => sendCommand(ws.current, 0x01, value)}>
+            {fanHeaterLabel(value)}
+          </button>
+        ))}
+        <p>Heater: </p>
+        {([0, 1, 2] as const).map((value) => (
+          <button
+            key={value}
+            className={data?.heater === value ? "active" : ""}
+            disabled={autoControl}
+            onClick={() => sendCommand(ws.current, 0x02, value)}>
+            {fanHeaterLabel(value)}
+          </button>
+        ))}
       </div>
     </>
-  )
+  );
 }
 
 function fanHeaterLabel(value: number): string {
@@ -112,7 +156,6 @@ function parseUARTData(buf: ArrayBuffer): UARTData | undefined {
   if (bytes.length < 10) return undefined;
   if (view.getUint8(0) !== 0xAB) return undefined;
 
-  const crcOffset = bytes.length - 2;
   const statusOffset = bytes.length - 3;
   
   const payload = bytes.slice(0, bytes.length - 2);
@@ -149,18 +192,6 @@ function decodeFloat16(h: number): number {
   if (exp === 0) return sign * Math.pow(2, -14) * (frac / 1024);
   if (exp === 31) return frac ? NaN : sign * Infinity;
   return sign * Math.pow(2, exp - 15) * (1 + frac / 1024);
-}
-
-
-function crc16X25(bytes: Uint8Array, length: number): number {
-  let crc = 0xffff;
-  for (let i = 0; i < length; i++) {
-    crc ^= bytes[i];
-    for (let j = 0; j < 8; j++) {
-      crc = (crc >> 1) ^ ((crc & 1) ? 0x8408 : 0);
-    }
-  }
-  return (crc ^ 0xffff) & 0xffff;
 }
 
 function calculateCrc16(data: Uint8Array): number {
