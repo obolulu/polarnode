@@ -3,7 +3,7 @@ interface UARTData {
     temp: number;
     fan: number;
     heater: number;
-    battery: number;
+    battery?: number;
     status: number;
 }
 export type { UARTData };

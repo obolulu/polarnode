@@ -77,7 +77,7 @@ function App() {
             <TemperatureChart points={tempHistory} />
             <p>Fan: {fanHeaterLabel(data.fan)}</p>
             <p>Heater: {fanHeaterLabel(data.heater)}</p>
-            <p>Battery: {data.battery}%</p>
+            <p>Battery: {data.battery >= 0 ? `${data.battery}%` : "N/A"}</p>
             <p>Status: {checkStatus(data.status)}</p>
           </div>
         ) : <p>waiting for data!!</p>}
@@ -134,18 +134,20 @@ function checkStatus(status: number) {
   if (status === 0) {
     return "OK";
   }
-  else if (status === 1) {
-    return "Offline";
-  } else if (status === 2) {
-    return "Too cold";
-  } else if (status === 4) {
-    return "Too hot";
-  }
-  else if (status === 8) {
-    return "Control error";
+  
+  const statusMessages: string[] = [];
+  
+  if (status & (1 << 0)) statusMessages.push("Power Issues");
+  if (status & (1 << 1)) statusMessages.push("Too Cold");
+  if (status & (1 << 2)) statusMessages.push("Too Hot");
+  if (status & (1 << 3)) statusMessages.push("Control Error");
+  if (status & (1 << 4)) statusMessages.push("Requires Maintenance");
+  
+  if (statusMessages.length === 0) {
+    return "Unknown Status";
   }
   else {
-    return "Unknown error";
+    return statusMessages.join(", ");
   }
 }
 
@@ -180,7 +182,7 @@ function parseUARTData(buf: ArrayBuffer): UARTData | undefined {
   else if (optionalLen === 0) battery = undefined;
   else return undefined;
 
-  return { id, temp, fan, heater, battery: battery ?? -1, status };
+  return { id, temp, fan, heater, battery, status };
 }
 
 
