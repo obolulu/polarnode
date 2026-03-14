@@ -5,6 +5,7 @@ import './App.css'
 import type { UARTData } from './Interfaces';
 import type { TempPoint } from './components/TemperatureChart';
 import { TemperatureChart } from './components/TemperatureChart';
+import { BatteryUsageIndicator } from './components/BatteryUsageIndicator';
 
 function computeAutoTargets(temp: number): { fan: number; heater: number; label: string } {
   if (temp > 15) return { fan: 2, heater: 0, label: "Cooling hard (Fan High)" };
@@ -18,6 +19,7 @@ function App() {
   const [data, setData] = useState<UARTData | null>(null);
   const [tempHistory, setTempHistory] = useState<TempPoint[]>([]);
   const [autoControl, setAutoControl] = useState(false);
+  const [lastKnownBattery, setLastKnownBattery] = useState<number | null>(null);
   const autoControlRef = useRef(false);
   const ws = useRef<WebSocket | null>(null);
 
@@ -37,6 +39,10 @@ function App() {
       const parsed = parseUARTData(event.data);
       if (parsed) {
         setData(parsed);
+
+        if (parsed.battery !== undefined) {
+          setLastKnownBattery(parsed.battery);
+        }
 
         const now = Date.now();
         const cutoff = now - 60_000;
@@ -72,12 +78,13 @@ function App() {
         <h1>PolarNode</h1>
         {data ? (
           <div>
-            <p>ID: {data.id}</p>
+            <p>ID: 0x{data.id.toString(16).toUpperCase().padStart(4, '0')}</p>
             <p>Temperature: {data.temp}</p>
             <TemperatureChart points={tempHistory} />
             <p>Fan: {fanHeaterLabel(data.fan)}</p>
             <p>Heater: {fanHeaterLabel(data.heater)}</p>
-            <p>Battery: {data.battery >= 0 ? `${data.battery}%` : "N/A"}</p>
+            <BatteryUsageIndicator fan={data.fan} heater={data.heater} />
+            <p>Battery: {data.battery !== undefined ? `${data.battery}%` : (lastKnownBattery !== null ? `${lastKnownBattery}%` : "N/A")}</p>
             <p>Status: {checkStatus(data.status)}</p>
           </div>
         ) : <p>waiting for data!!</p>}
